@@ -168,6 +168,12 @@ fun _shape_next_index(codepoints: i64, count: i32, index: i32) -> i32:
 # written, which can be fewer than the input when lam-alef ligatures form.
 # Returns -1 if the output buffer is too small.
 fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
+    return arabic_shape_mapped(codepoints, count, out, 0, capacity)
+
+# The same, also recording where each output codepoint came from. Bidi needs
+# this: the output can be shorter than the input, so a ligature has to inherit
+# the embedding level of the lam it was built from.
+fun arabic_shape_mapped(codepoints: i64, count: i32, out: i64, map: i64, capacity: i32) -> i32:
     written: i32 = 0
     i: i32 = 0
     cp: i32 = 0
@@ -187,6 +193,8 @@ fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
 
         if own == JOINING_TRANSPARENT:
             Memory.write_i32(out + (written as i64) * 4, cp)
+            if map != 0:
+                Memory.write_i32(map + (written as i64) * 4, i)
             written = written + 1
             i = i + 1
             continue
@@ -207,6 +215,8 @@ fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
                 if joins_back == 1:
                     ligature = ligature + 1
                 Memory.write_i32(out + (written as i64) * 4, ligature)
+                if map != 0:
+                    Memory.write_i32(map + (written as i64) * 4, i)
                 written = written + 1
                 # Carry any marks between the lam and the alef, then skip both.
                 j: i32 = i + 1
@@ -214,6 +224,8 @@ fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
                     if written >= capacity:
                         return -1
                     Memory.write_i32(out + (written as i64) * 4, Memory.read_i32(codepoints + (j as i64) * 4))
+                    if map != 0:
+                        Memory.write_i32(map + (written as i64) * 4, j)
                     written = written + 1
                     j = j + 1
                 i = next + 1
@@ -234,6 +246,8 @@ fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
 
         shaped = arabic_form_of(cp, form)
         Memory.write_i32(out + (written as i64) * 4, shaped)
+        if map != 0:
+            Memory.write_i32(map + (written as i64) * 4, i)
         written = written + 1
         i = i + 1
     return written

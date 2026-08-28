@@ -1,0 +1,217 @@
+import text
+
+# Bidirectional ordering. Every expected visual order below is worked out by
+# hand from UAX #9, not read back from the implementation.
+
+fun put(buf: i64, index: i32, value: i32):
+    Memory.write_i32(buf + (index as i64) * 4, value)
+
+fun at(buf: i64, index: i32) -> i32:
+    return Memory.read_i32(buf + (index as i64) * 4)
+
+fun order_is(order: i64, count: i32, expected: i64) -> i32:
+    i: i32 = 0
+    while i < count:
+        if at(order, i) != at(expected, i):
+            return 0
+        i = i + 1
+    return 1
+
+fun main() -> i32:
+    src: i64 = Memory.malloc_zeroed(256)
+    order: i64 = Memory.malloc_zeroed(256)
+    want: i64 = Memory.malloc_zeroed(256)
+    levels: i64 = Memory.malloc_zeroed(256)
+    types: i64 = Memory.malloc_zeroed(256)
+    if src == 0 or order == 0 or want == 0 or levels == 0 or types == 0:
+        print("bidi: allocation failed")
+        return 1
+
+    # ---------------------------------------------------------------
+    # The paragraph takes the direction of its first strong character.
+    # Digits are not strong, so they do not decide it.
+    # ---------------------------------------------------------------
+    put(src, 0, 97)
+    put(src, 1, 1576)
+    if bidi_paragraph_level(src, 2) != 0:
+        print("bidi: a latin-first paragraph should read left to right")
+        return 2
+    put(src, 0, 49)
+    put(src, 1, 50)
+    put(src, 2, 1576)
+    if bidi_paragraph_level(src, 3) != 1:
+        print("bidi: digits before Arabic should not make the paragraph latin")
+        return 3
+
+    # ---------------------------------------------------------------
+    # Latin alone keeps its order; Arabic alone is reversed.
+    # ---------------------------------------------------------------
+    put(src, 0, 97)
+    put(src, 1, 98)
+    put(src, 2, 99)
+    bidi_visual_order(src, 3, order, 0)
+    put(want, 0, 0)
+    put(want, 1, 1)
+    put(want, 2, 2)
+    if order_is(order, 3, want) == 0:
+        print("bidi: latin text was reordered")
+        return 4
+
+    put(src, 0, 1576)
+    put(src, 1, 1605)
+    bidi_visual_order(src, 2, order, 1)
+    put(want, 0, 1)
+    put(want, 1, 0)
+    if order_is(order, 2, want) == 0:
+        print("bidi: Arabic was not reversed for display")
+        return 5
+
+    # ---------------------------------------------------------------
+    # Arabic paragraph with a latin run inside it.
+    #
+    #   logical:  ب ب _ a b c
+    #   drawn:    a b c _ ب ب      with the two Arabic letters swapped
+    # ---------------------------------------------------------------
+    put(src, 0, 1576)
+    put(src, 1, 1576)
+    put(src, 2, 32)
+    put(src, 3, 97)
+    put(src, 4, 98)
+    put(src, 5, 99)
+    bidi_visual_order(src, 6, order, bidi_paragraph_level(src, 6))
+    put(want, 0, 3)
+    put(want, 1, 4)
+    put(want, 2, 5)
+    put(want, 3, 2)
+    put(want, 4, 1)
+    put(want, 5, 0)
+    if order_is(order, 6, want) == 0:
+        print("bidi: a latin run inside Arabic came out in the wrong place")
+        return 6
+
+    # ---------------------------------------------------------------
+    # The case bidi exists for: a number inside Arabic keeps reading left
+    # to right even though everything around it reads right to left.
+    #
+    #   logical:  ب _ 1 2
+    #   drawn:    1 2 _ ب        not "21"
+    # ---------------------------------------------------------------
+    put(src, 0, 1576)
+    put(src, 1, 32)
+    put(src, 2, 49)
+    put(src, 3, 50)
+    bidi_visual_order(src, 4, order, bidi_paragraph_level(src, 4))
+    put(want, 0, 2)
+    put(want, 1, 3)
+    put(want, 2, 1)
+    put(want, 3, 0)
+    if order_is(order, 4, want) == 0:
+        print("bidi: a number inside Arabic was reversed with the text")
+        return 7
+
+    # W2: a european digit after an Arabic letter becomes an arabic number,
+    # which is what lifts it two levels rather than one.
+    bidi_resolve(src, 4, types, levels, 1)
+    if at(levels, 0) != 1:
+        print("bidi: the Arabic letter is at the wrong level")
+        return 8
+    if at(levels, 2) != 2 or at(levels, 3) != 2:
+        print("bidi: the number did not rise above the Arabic run")
+        return 9
+
+    # ---------------------------------------------------------------
+    # An Arabic run inside a latin paragraph is reversed in place.
+    #
+    #   logical:  a b c _ ب ب _ _
+    #   drawn:    a b c _ ب ب _ _   with only the two Arabic letters swapped
+    # ---------------------------------------------------------------
+    put(src, 0, 97)
+    put(src, 1, 98)
+    put(src, 2, 99)
+    put(src, 3, 32)
+    put(src, 4, 1576)
+    put(src, 5, 1605)
+    put(src, 6, 32)
+    put(src, 7, 32)
+    if bidi_paragraph_level(src, 8) != 0:
+        print("bidi: the paragraph should be left to right")
+        return 10
+    bidi_visual_order(src, 8, order, 0)
+    put(want, 0, 0)
+    put(want, 1, 1)
+    put(want, 2, 2)
+    put(want, 3, 3)
+    put(want, 4, 5)
+    put(want, 5, 4)
+    put(want, 6, 6)
+    put(want, 7, 7)
+    if order_is(order, 8, want) == 0:
+        print("bidi: an Arabic run inside latin was not reversed in place")
+        return 11
+
+    # L1: trailing whitespace returns to the paragraph direction, so a line
+    # does not end with spaces dragged to the wrong side.
+    bidi_resolve(src, 8, types, levels, 0)
+    if at(levels, 6) != 0 or at(levels, 7) != 0:
+        print("bidi: trailing whitespace kept a run level")
+        return 12
+    if at(levels, 4) != 1 or at(levels, 5) != 1:
+        print("bidi: the Arabic run is at the wrong level")
+        return 13
+
+    # ---------------------------------------------------------------
+    # The whole pipeline: shape in logical order, then reorder for display.
+    #
+    # مرحبا shapes to FEE3 FEAE FEA3 FE92 FE8E and, being a right-to-left
+    # paragraph, is drawn in the opposite order.
+    # ---------------------------------------------------------------
+    count: i32 = utf8_decode_all("مرحبا", src, 32)
+    if count != 5:
+        print("bidi: the word did not decode to five letters")
+        return 14
+    written: i32 = text_display_order(src, count, order, 32)
+    if written != 5:
+        print("bidi: the display pass changed the length")
+        return 15
+    if at(order, 0) != 65166:
+        print("bidi: the final alef is not drawn first")
+        return 16
+    if at(order, 1) != 65170 or at(order, 2) != 65187:
+        print("bidi: the middle of the word is in the wrong order")
+        return 17
+    if at(order, 3) != 65198 or at(order, 4) != 65251:
+        print("bidi: the initial meem is not drawn last")
+        return 18
+
+    # A lam-alef ligature shortens the text; the ligature must still land in
+    # the position the lam had.
+    count = utf8_decode_all("لا", src, 32)
+    written = text_display_order(src, count, order, 32)
+    if written != 1 or at(order, 0) != 65275:
+        print("bidi: the lam-alef ligature did not survive the display pass")
+        return 19
+
+    # Mixed content end to end, through the string helper.
+    bytes: i64 = Memory.malloc_zeroed(256)
+    if text_display_str("مرحبا abc", bytes, 256) <= 0:
+        print("bidi: the mixed string helper failed")
+        return 20
+    if utf8_decode_all(bytes as str, order, 32) != 9:
+        print("bidi: the mixed string lost characters")
+        return 21
+    # Latin comes first on screen in an Arabic paragraph.
+    if at(order, 0) != 97 or at(order, 1) != 98 or at(order, 2) != 99:
+        print("bidi: the latin run is not drawn on the left")
+        return 22
+    if at(order, 8) != 65251:
+        print("bidi: the Arabic word is not drawn to the right of the latin")
+        return 23
+    Memory.free(bytes)
+
+    Memory.free(src)
+    Memory.free(order)
+    Memory.free(want)
+    Memory.free(levels)
+    Memory.free(types)
+    print("bidi: ok")
+    return 0

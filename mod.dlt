@@ -8,6 +8,7 @@ module text
 import unicode
 
 load text/shape
+load text/bidi
 
 export SHAPE_ISOLATED
 export SHAPE_FINAL
@@ -18,3 +19,10 @@ export arabic_form_of
 export arabic_lam_alef
 export arabic_shape
 export arabic_shape_str
+export arabic_shape_mapped
+export bidi_paragraph_level
+export bidi_resolve
+export bidi_reorder
+export bidi_visual_order
+export text_display_order
+export text_display_str

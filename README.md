@@ -37,8 +37,38 @@ Two cases make it more than that rule:
 Output is in the Arabic Presentation Forms blocks, which a font's character
 map can be asked for directly without a font shaping engine.
 
+## Bidirectional ordering
+
+Shaping decides what each letter looks like. Bidi decides what order they are
+drawn in, which is a separate problem: `"ب 12"` stores the digits after the
+Arabic and draws them before it, still reading `12` and not `21`.
+
+```dolet
+written: i64 = text_display_str("مرحبا abc", buffer, 256)
+```
+
+`text_display_order` is the whole pipeline: shape in logical order, because
+joining depends on logical neighbours, then reorder for display. A lam-alef
+ligature shortens the text, so each output glyph carries the level of the
+character it came from and the ligature follows its lam.
+
+Underneath, `bidi_paragraph_level`, `bidi_resolve` and `bidi_reorder` are
+available separately for a caller that wants the levels themselves.
+
+This is UAX #9 for one paragraph treated as a single run: the weak rules
+(W1-W7), the neutral rules (N1-N2), the implicit levels (I1-I2) and the
+reordering rules (L1-L2).
+
+**Deliberately absent**, and worth knowing before relying on it:
+
+- Explicit embedding and override codes (the X rules). Those codepoints are
+  classed BN and drop out as neutrals rather than changing levels.
+- Paired-bracket resolution (N0). A bracket around mixed-direction text takes
+  the surrounding direction rather than matching its pair.
+
+Both are rare in ordinary text, and neither is guessed at: what is not
+implemented is not claimed.
+
 ## Not yet here
 
-Bidirectional ordering (UAX #9). Shaping decides what each letter looks like;
-bidi decides what order the letters are drawn in. Arabic mixed with Latin or
-with numbers needs both.
+Line breaking (UAX #14), and grapheme cluster boundaries.

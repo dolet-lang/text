@@ -1,0 +1,353 @@
+# ============================
+#  Bidirectional Ordering
+# ============================
+# Shaping decides what each letter looks like. Bidi decides what order the
+# letters are drawn in, which is a separate problem with a separate answer:
+# "2024 مرحبا" stores the digits after the Arabic and draws them before it.
+#
+# This is UAX #9 applied to one paragraph treated as a single run. The weak
+# rules (W1-W7), the neutral rules (N1-N2), the implicit levels (I1-I2) and
+# the reordering rules (L1-L2) are all here.
+#
+# Deliberately absent, and worth knowing before relying on this:
+#   - Explicit embedding and override codes (the X rules). Those codepoints
+#     are classed BN and drop out as neutrals rather than changing levels.
+#   - Paired-bracket resolution (N0). A bracket around mixed-direction text
+#     takes the surrounding direction rather than matching its pair.
+# Both are rare in ordinary text and neither is guessed at: what is not
+# implemented is simply not claimed.
+
+# Neutral for the N rules: separators, whitespace, and other neutrals.
+fun _bidi_is_neutral(t: i32) -> i32:
+    if t == BIDI_B or t == BIDI_S or t == BIDI_WS or t == BIDI_ON:
+        return 1
+    return 0
+
+# For the N and I rules, numbers side with right-to-left.
+fun _bidi_as_direction(t: i32) -> i32:
+    if t == BIDI_L:
+        return BIDI_L
+    if t == BIDI_R or t == BIDI_EN or t == BIDI_AN:
+        return BIDI_R
+    return -1
+
+# P2/P3: the paragraph direction is that of the first strong character.
+fun bidi_paragraph_level(codepoints: i64, count: i32) -> i32:
+    i: i32 = 0
+    t: i32 = 0
+    while i < count:
+        t = unicode_bidi_class(Memory.read_i32(codepoints + (i as i64) * 4))
+        if t == BIDI_L:
+            return 0
+        if t == BIDI_R or t == BIDI_AL:
+            return 1
+        i = i + 1
+    return 0
+
+# Resolve embedding levels. `types` is caller-owned scratch of `count` i32
+# slots; `levels` receives one level per codepoint.
+fun bidi_resolve(codepoints: i64, count: i32, types: i64, levels: i64, para_level: i32) -> i32:
+    if count <= 0:
+        return 0
+    i: i32 = 0
+    while i < count:
+        Memory.write_i32(types + (i as i64) * 4, unicode_bidi_class(Memory.read_i32(codepoints + (i as i64) * 4)))
+        Memory.write_i32(levels + (i as i64) * 4, para_level)
+        i = i + 1
+
+    # The boundaries either side of the run take the paragraph direction.
+    edge: i32 = BIDI_L
+    if (para_level & 1) == 1:
+        edge = BIDI_R
+
+    # W1: a non-spacing mark takes the type of what it sits on.
+    previous: i32 = edge
+    i = 0
+    t: i32 = 0
+    while i < count:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        if t == BIDI_NSM:
+            Memory.write_i32(types + (i as i64) * 4, previous)
+            t = previous
+        previous = t
+        i = i + 1
+
+    # W2: a european number after an arabic letter is an arabic number.
+    # W3: and the arabic letter itself becomes plain right-to-left.
+    strong: i32 = edge
+    i = 0
+    while i < count:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        if t == BIDI_L or t == BIDI_R or t == BIDI_AL:
+            strong = t
+        elif t == BIDI_EN and strong == BIDI_AL:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_AN)
+        i = i + 1
+    i = 0
+    while i < count:
+        if Memory.read_i32(types + (i as i64) * 4) == BIDI_AL:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_R)
+        i = i + 1
+
+    # W4: a single separator between two numbers of the same kind joins them.
+    i = 1
+    before: i32 = 0
+    after: i32 = 0
+    while i < count - 1:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        before = Memory.read_i32(types + ((i - 1) as i64) * 4)
+        after = Memory.read_i32(types + ((i + 1) as i64) * 4)
+        if t == BIDI_ES and before == BIDI_EN and after == BIDI_EN:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_EN)
+        elif t == BIDI_CS and before == BIDI_EN and after == BIDI_EN:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_EN)
+        elif t == BIDI_CS and before == BIDI_AN and after == BIDI_AN:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_AN)
+        i = i + 1
+
+    # W5: a run of terminators touching a european number joins it.
+    i = 0
+    run_start: i32 = 0
+    run_end: i32 = 0
+    while i < count:
+        if Memory.read_i32(types + (i as i64) * 4) == BIDI_ET:
+            run_start = i
+            run_end = i
+            while run_end < count and Memory.read_i32(types + (run_end as i64) * 4) == BIDI_ET:
+                run_end = run_end + 1
+            touches: i32 = 0
+            if run_start > 0 and Memory.read_i32(types + ((run_start - 1) as i64) * 4) == BIDI_EN:
+                touches = 1
+            if run_end < count and Memory.read_i32(types + (run_end as i64) * 4) == BIDI_EN:
+                touches = 1
+            if touches == 1:
+                j: i32 = run_start
+                while j < run_end:
+                    Memory.write_i32(types + (j as i64) * 4, BIDI_EN)
+                    j = j + 1
+            i = run_end
+        else:
+            i = i + 1
+
+    # W6: separators and terminators that survived are just neutral.
+    i = 0
+    while i < count:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        if t == BIDI_ET or t == BIDI_ES or t == BIDI_CS:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_ON)
+        i = i + 1
+
+    # W7: a european number in left-to-right context is just left-to-right.
+    strong = edge
+    i = 0
+    while i < count:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        if t == BIDI_L or t == BIDI_R:
+            strong = t
+        elif t == BIDI_EN and strong == BIDI_L:
+            Memory.write_i32(types + (i as i64) * 4, BIDI_L)
+        i = i + 1
+
+    # N1: neutrals between two of the same direction take it.
+    # N2: the rest take the paragraph direction.
+    i = 0
+    while i < count:
+        if _bidi_is_neutral(Memory.read_i32(types + (i as i64) * 4)) == 1:
+            run_start = i
+            run_end = i
+            while run_end < count and _bidi_is_neutral(Memory.read_i32(types + (run_end as i64) * 4)) == 1:
+                run_end = run_end + 1
+            left_dir: i32 = edge
+            if run_start > 0:
+                left_dir = _bidi_as_direction(Memory.read_i32(types + ((run_start - 1) as i64) * 4))
+            right_dir: i32 = edge
+            if run_end < count:
+                right_dir = _bidi_as_direction(Memory.read_i32(types + (run_end as i64) * 4))
+            resolved: i32 = edge
+            if left_dir == right_dir and left_dir != -1:
+                resolved = left_dir
+            k: i32 = run_start
+            while k < run_end:
+                Memory.write_i32(types + (k as i64) * 4, resolved)
+                k = k + 1
+            i = run_end
+        else:
+            i = i + 1
+
+    # I1/I2: turn resolved types into levels.
+    i = 0
+    level: i32 = 0
+    while i < count:
+        t = Memory.read_i32(types + (i as i64) * 4)
+        level = para_level
+        if (para_level & 1) == 0:
+            if t == BIDI_R:
+                level = para_level + 1
+            elif t == BIDI_AN or t == BIDI_EN:
+                level = para_level + 2
+        else:
+            if t == BIDI_L or t == BIDI_EN or t == BIDI_AN:
+                level = para_level + 1
+        Memory.write_i32(levels + (i as i64) * 4, level)
+        i = i + 1
+
+    # L1: trailing whitespace, and whitespace before a separator, returns to
+    # the paragraph direction, using the ORIGINAL classes rather than the
+    # resolved ones.
+    i = count - 1
+    trailing: i32 = 1
+    original: i32 = 0
+    while i >= 0:
+        original = unicode_bidi_class(Memory.read_i32(codepoints + (i as i64) * 4))
+        if original == BIDI_B or original == BIDI_S:
+            Memory.write_i32(levels + (i as i64) * 4, para_level)
+            trailing = 1
+        elif trailing == 1 and (original == BIDI_WS or original == BIDI_BN):
+            Memory.write_i32(levels + (i as i64) * 4, para_level)
+        else:
+            trailing = 0
+        i = i - 1
+    return 1
+
+# L2: reverse each run at every level from the highest down to the lowest odd
+# one. `order` receives logical indices in the order they should be drawn.
+fun bidi_reorder(levels: i64, count: i32, order: i64) -> i32:
+    if count <= 0:
+        return 0
+    i: i32 = 0
+    while i < count:
+        Memory.write_i32(order + (i as i64) * 4, i)
+        i = i + 1
+
+    highest: i32 = 0
+    lowest_odd: i32 = 127
+    level: i32 = 0
+    i = 0
+    while i < count:
+        level = Memory.read_i32(levels + (i as i64) * 4)
+        if level > highest:
+            highest = level
+        if (level & 1) == 1 and level < lowest_odd:
+            lowest_odd = level
+        i = i + 1
+    if lowest_odd > highest:
+        return 1
+
+    at: i32 = highest
+    while at >= lowest_odd:
+        i = 0
+        while i < count:
+            if Memory.read_i32(levels + (Memory.read_i32(order + (i as i64) * 4) as i64) * 4) >= at:
+                run_start: i32 = i
+                run_end: i32 = i
+                while run_end < count and Memory.read_i32(levels + (Memory.read_i32(order + (run_end as i64) * 4) as i64) * 4) >= at:
+                    run_end = run_end + 1
+                a: i32 = run_start
+                b: i32 = run_end - 1
+                swap: i32 = 0
+                while a < b:
+                    swap = Memory.read_i32(order + (a as i64) * 4)
+                    Memory.write_i32(order + (a as i64) * 4, Memory.read_i32(order + (b as i64) * 4))
+                    Memory.write_i32(order + (b as i64) * 4, swap)
+                    a = a + 1
+                    b = b - 1
+                i = run_end
+            else:
+                i = i + 1
+        at = at - 1
+    return 1
+
+# Logical indices in the order they should be drawn, left to right.
+fun bidi_visual_order(codepoints: i64, count: i32, order: i64, para_level: i32) -> i32:
+    if count <= 0:
+        return 0
+    types: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if types == 0:
+        return 0
+    levels: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if levels == 0:
+        Memory.free(types)
+        return 0
+    bidi_resolve(codepoints, count, types, levels, para_level)
+    result: i32 = bidi_reorder(levels, count, order)
+    Memory.free(types)
+    Memory.free(levels)
+    return result
+
+# The whole pipeline a renderer wants: shape in logical order, because joining
+# depends on logical neighbours, then reorder the result for display.
+# Returns the number of codepoints written, or -1 on failure.
+fun text_display_order(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
+    if count <= 0:
+        return 0
+    shaped: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if shaped == 0:
+        return -1
+    map: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if map == 0:
+        Memory.free(shaped)
+        return -1
+
+    written: i32 = arabic_shape_mapped(codepoints, count, shaped, map, count)
+    if written < 0:
+        Memory.free(shaped)
+        Memory.free(map)
+        return -1
+
+    # Levels come from the original text; each shaped glyph inherits the level
+    # of the character it came from, so a ligature follows its lam.
+    types: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    levels: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    shaped_levels: i64 = Memory.malloc_zeroed((written as i64) * 4 + 4)
+    order: i64 = Memory.malloc_zeroed((written as i64) * 4 + 4)
+    if types == 0 or levels == 0 or shaped_levels == 0 or order == 0:
+        Memory.free(shaped)
+        Memory.free(map)
+        return -1
+
+    para: i32 = bidi_paragraph_level(codepoints, count)
+    bidi_resolve(codepoints, count, types, levels, para)
+    i: i32 = 0
+    while i < written:
+        Memory.write_i32(shaped_levels + (i as i64) * 4, Memory.read_i32(levels + (Memory.read_i32(map + (i as i64) * 4) as i64) * 4))
+        i = i + 1
+    bidi_reorder(shaped_levels, written, order)
+
+    result: i32 = written
+    if written > capacity:
+        result = -1
+    else:
+        i = 0
+        while i < written:
+            Memory.write_i32(out + (i as i64) * 4, Memory.read_i32(shaped + (Memory.read_i32(order + (i as i64) * 4) as i64) * 4))
+            i = i + 1
+
+    Memory.free(shaped)
+    Memory.free(map)
+    Memory.free(types)
+    Memory.free(levels)
+    Memory.free(shaped_levels)
+    Memory.free(order)
+    return result
+
+# Same, between UTF-8 strings.
+fun text_display_str(value: str, out: i64, capacity: i64) -> i64:
+    count: i32 = utf8_count(value)
+    if count == 0:
+        Memory.write_i8(out, 0 as i8)
+        return 0
+    source: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if source == 0:
+        return -1
+    target: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if target == 0:
+        Memory.free(source)
+        return -1
+    decoded: i32 = utf8_decode_all(value, source, count)
+    written: i32 = text_display_order(source, decoded, target, count)
+    result: i64 = -1
+    if written >= 0:
+        result = utf8_encode_all(target, written, out, capacity)
+    Memory.free(source)
+    Memory.free(target)
+    return result
