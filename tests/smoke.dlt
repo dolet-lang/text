@@ -1,0 +1,206 @@
+import text
+
+# Every expected codepoint below is worked out by hand from the joining rules
+# and the Arabic Presentation Forms blocks, not read back from the code.
+#
+#   beh   U+0628  isolated FE8F 65167  final FE90 65168
+#                 initial  FE91 65169  medial FE92 65170
+#   alef  U+0627  isolated FE8D 65165  final FE8E 65166
+#   lam-alef       isolated FEFB 65275  final FEFC 65276
+
+fun shape_into(source: i64, count: i32, out: i64) -> i32:
+    return arabic_shape(source, count, out, 32)
+
+fun put(buffer: i64, index: i32, codepoint: i32):
+    Memory.write_i32(buffer + (index as i64) * 4, codepoint)
+
+fun at(buffer: i64, index: i32) -> i32:
+    return Memory.read_i32(buffer + (index as i64) * 4)
+
+fun main() -> i32:
+    source: i64 = Memory.malloc_zeroed(256)
+    out: i64 = Memory.malloc_zeroed(256)
+    if source == 0 or out == 0:
+        print("text smoke: allocation failed")
+        return 1
+
+    # ---------------------------------------------------------------
+    # Two dual-joining letters: initial then final.
+    # ---------------------------------------------------------------
+    put(source, 0, 1576)
+    put(source, 1, 1576)
+    n: i32 = shape_into(source, 2, out)
+    if n != 2:
+        print("text smoke: shaping changed the length of a plain pair")
+        return 2
+    if at(out, 0) != 65169 or at(out, 1) != 65168:
+        print("text smoke: a pair of beh did not take initial and final forms")
+        return 3
+
+    # Three of them: initial, medial, final.
+    put(source, 2, 1576)
+    n = shape_into(source, 3, out)
+    if at(out, 0) != 65169 or at(out, 1) != 65170 or at(out, 2) != 65168:
+        print("text smoke: a run of three did not produce a medial form")
+        return 4
+
+    # ---------------------------------------------------------------
+    # Alef joins only backwards, so it ends a cursive run.
+    # ---------------------------------------------------------------
+    put(source, 0, 1576)
+    put(source, 1, 1575)
+    n = shape_into(source, 2, out)
+    if at(out, 0) != 65169 or at(out, 1) != 65166:
+        print("text smoke: beh-alef did not connect")
+        return 5
+
+    # The other way round it cannot connect at all: both stay isolated.
+    put(source, 0, 1575)
+    put(source, 1, 1576)
+    n = shape_into(source, 2, out)
+    if at(out, 0) != 65165 or at(out, 1) != 65167:
+        print("text smoke: alef-beh joined when alef cannot join forwards")
+        return 6
+
+    # ---------------------------------------------------------------
+    # Lam followed by alef is one ligature, not two letters.
+    # ---------------------------------------------------------------
+    put(source, 0, 1604)
+    put(source, 1, 1575)
+    n = shape_into(source, 2, out)
+    if n != 1:
+        print("text smoke: lam-alef did not collapse into one ligature")
+        return 7
+    if at(out, 0) != 65275:
+        print("text smoke: the lam-alef ligature is the wrong codepoint")
+        return 8
+
+    # With something before the lam, the ligature takes its final form.
+    put(source, 0, 1576)
+    put(source, 1, 1604)
+    put(source, 2, 1575)
+    n = shape_into(source, 3, out)
+    if n != 2:
+        print("text smoke: beh-lam-alef did not collapse to two")
+        return 9
+    if at(out, 0) != 65169 or at(out, 1) != 65276:
+        print("text smoke: the connected lam-alef is the wrong form")
+        return 10
+
+    # Alef with hamza has its own ligature.
+    put(source, 0, 1604)
+    put(source, 1, 1571)
+    n = shape_into(source, 2, out)
+    if at(out, 0) != 65271:
+        print("text smoke: lam with hamza-alef used the wrong ligature")
+        return 11
+
+    # ---------------------------------------------------------------
+    # A mark between two letters must not break their connection.
+    # ---------------------------------------------------------------
+    put(source, 0, 1576)
+    put(source, 1, 1614)
+    put(source, 2, 1576)
+    n = shape_into(source, 3, out)
+    if n != 3:
+        print("text smoke: a mark was dropped")
+        return 12
+    if at(out, 0) != 65169:
+        print("text smoke: a mark broke the connection to the following letter")
+        return 13
+    if at(out, 1) != 1614:
+        print("text smoke: the mark itself was altered")
+        return 14
+    if at(out, 2) != 65168:
+        print("text smoke: a mark broke the connection to the preceding letter")
+        return 15
+
+    # ---------------------------------------------------------------
+    # Non-Arabic passes through untouched.
+    # ---------------------------------------------------------------
+    put(source, 0, 97)
+    put(source, 1, 98)
+    n = shape_into(source, 2, out)
+    if at(out, 0) != 97 or at(out, 1) != 98:
+        print("text smoke: latin text was altered")
+        return 16
+
+    # ---------------------------------------------------------------
+    # A two-form letter asked for a form it does not have falls back.
+    # ---------------------------------------------------------------
+    if arabic_form_of(1583, SHAPE_MEDIAL) != 65194:
+        print("text smoke: a two-form letter did not fall back to final")
+        return 17
+    if arabic_form_of(1583, SHAPE_INITIAL) != 65193:
+        print("text smoke: a two-form letter did not fall back to isolated")
+        return 18
+    if arabic_form_of(65, SHAPE_INITIAL) != 65:
+        print("text smoke: a letter with no forms was changed")
+        return 19
+
+    # ---------------------------------------------------------------
+    # A real word, end to end.
+    #
+    #   م  initial, because reh can be joined to from the right
+    #   ر  final, and reh cannot join forwards, so
+    #   ح  starts fresh: initial
+    #   ب  medial
+    #   ا  final
+    # ---------------------------------------------------------------
+    count: i32 = utf8_decode_all("مرحبا", source, 32)
+    if count != 5:
+        print("text smoke: the word did not decode to five letters")
+        return 20
+    n = shape_into(source, count, out)
+    if n != 5:
+        print("text smoke: shaping changed the length of the word")
+        return 21
+    if at(out, 0) != 65251:
+        print("text smoke: meem is not in its initial form")
+        return 22
+    if at(out, 1) != 65198:
+        print("text smoke: reh is not in its final form")
+        return 23
+    if at(out, 2) != 65187:
+        print("text smoke: hah did not start a new run after reh")
+        return 24
+    if at(out, 3) != 65170:
+        print("text smoke: beh is not in its medial form")
+        return 25
+    if at(out, 4) != 65166:
+        print("text smoke: alef is not in its final form")
+        return 26
+
+    # ---------------------------------------------------------------
+    # The string helper produces valid UTF-8 of the shaped text.
+    # ---------------------------------------------------------------
+    bytes: i64 = Memory.malloc_zeroed(256)
+    if bytes == 0:
+        print("text smoke: allocation failed")
+        return 27
+    written: i64 = arabic_shape_str("مرحبا", bytes, 256)
+    # Five presentation forms, three bytes each.
+    if written != 15:
+        print("text smoke: the shaped string is the wrong byte length")
+        return 28
+    check: i64 = Memory.malloc_zeroed(256)
+    if utf8_decode_all(bytes as str, check, 32) != 5:
+        print("text smoke: the shaped string does not decode back to five")
+        return 29
+    if Memory.read_i32(check) != 65251:
+        print("text smoke: the shaped string lost its first form")
+        return 30
+    Memory.free(bytes)
+    Memory.free(check)
+
+    # An empty string is safe.
+    empty: i64 = Memory.malloc_zeroed(8)
+    if arabic_shape_str("", empty, 8) != 0:
+        print("text smoke: an empty string did not shape to nothing")
+        return 31
+    Memory.free(empty)
+
+    Memory.free(source)
+    Memory.free(out)
+    print("text smoke: ok")
+    return 0

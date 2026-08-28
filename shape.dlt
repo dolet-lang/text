@@ -1,0 +1,264 @@
+# ============================
+#  Arabic Shaping
+# ============================
+# Arabic letters change shape according to what they connect to. The same
+# letter has up to four forms — isolated, initial, medial, final — and a text
+# that ignores this renders as disconnected stumps that a reader has to
+# decipher rather than read.
+#
+# The rule, once the joining types are known, is small:
+#
+#     the letter joins backwards  when the letter before it can join forwards
+#     the letter joins forwards   when the letter after it can join backwards
+#
+#     joins both ways -> medial      joins backwards only -> final
+#     joins forwards  -> initial     joins neither        -> isolated
+#
+# Marks are transparent: they sit on a letter without breaking its connection
+# to its neighbours, so the search for "the letter before" skips them.
+#
+# Lam followed by an alef is not two letters side by side but one ligature,
+# and Unicode gives it its own codepoints. That is handled here too, which is
+# why the output can be shorter than the input.
+#
+# Output is in the Arabic Presentation Forms blocks. That is what a font's
+# character map can be asked for directly, without a font shaping engine.
+
+SHAPE_ISOLATED: i32 = 0
+SHAPE_FINAL:    i32 = 1
+SHAPE_INITIAL:  i32 = 2
+SHAPE_MEDIAL:   i32 = 3
+
+# Presentation-form base for a letter, packed as (base * 8) + form_count.
+# 0 when the letter has no presentation forms.
+fun arabic_forms(cp: i32) -> i32:
+    if cp == 1569:
+        return 65152 * 8 + 1
+    if cp == 1570:
+        return 65153 * 8 + 2
+    if cp == 1571:
+        return 65155 * 8 + 2
+    if cp == 1572:
+        return 65157 * 8 + 2
+    if cp == 1573:
+        return 65159 * 8 + 2
+    if cp == 1574:
+        return 65161 * 8 + 4
+    if cp == 1575:
+        return 65165 * 8 + 2
+    if cp == 1576:
+        return 65167 * 8 + 4
+    if cp == 1577:
+        return 65171 * 8 + 2
+    if cp == 1578:
+        return 65173 * 8 + 4
+    if cp == 1579:
+        return 65177 * 8 + 4
+    if cp == 1580:
+        return 65181 * 8 + 4
+    if cp == 1581:
+        return 65185 * 8 + 4
+    if cp == 1582:
+        return 65189 * 8 + 4
+    if cp == 1583:
+        return 65193 * 8 + 2
+    if cp == 1584:
+        return 65195 * 8 + 2
+    if cp == 1585:
+        return 65197 * 8 + 2
+    if cp == 1586:
+        return 65199 * 8 + 2
+    if cp == 1587:
+        return 65201 * 8 + 4
+    if cp == 1588:
+        return 65205 * 8 + 4
+    if cp == 1589:
+        return 65209 * 8 + 4
+    if cp == 1590:
+        return 65213 * 8 + 4
+    if cp == 1591:
+        return 65217 * 8 + 4
+    if cp == 1592:
+        return 65221 * 8 + 4
+    if cp == 1593:
+        return 65225 * 8 + 4
+    if cp == 1594:
+        return 65229 * 8 + 4
+    if cp == 1601:
+        return 65233 * 8 + 4
+    if cp == 1602:
+        return 65237 * 8 + 4
+    if cp == 1603:
+        return 65241 * 8 + 4
+    if cp == 1604:
+        return 65245 * 8 + 4
+    if cp == 1605:
+        return 65249 * 8 + 4
+    if cp == 1606:
+        return 65253 * 8 + 4
+    if cp == 1607:
+        return 65257 * 8 + 4
+    if cp == 1608:
+        return 65261 * 8 + 2
+    if cp == 1609:
+        return 65263 * 8 + 2
+    if cp == 1610:
+        return 65265 * 8 + 4
+    return 0
+
+# Isolated form of the lam-alef ligature for this alef, or 0.
+fun arabic_lam_alef(alef: i32) -> i32:
+    if alef == 1570:
+        return 65269
+    if alef == 1571:
+        return 65271
+    if alef == 1573:
+        return 65273
+    if alef == 1575:
+        return 65275
+    return 0
+
+# The presentation form, falling back to a shorter form when the letter does
+# not have the one asked for: a two-form letter asked for medial gets final.
+fun arabic_form_of(cp: i32, form: i32) -> i32:
+    packed: i32 = arabic_forms(cp)
+    if packed == 0:
+        return cp
+    base: i32 = packed / 8
+    count: i32 = packed - base * 8
+    wanted: i32 = form
+    if count == 1:
+        wanted = SHAPE_ISOLATED
+    elif count == 2:
+        if wanted == SHAPE_MEDIAL:
+            wanted = SHAPE_FINAL
+        elif wanted == SHAPE_INITIAL:
+            wanted = SHAPE_ISOLATED
+    return base + wanted
+
+fun _shape_can_join_forward(joining: i32) -> i32:
+    if joining == JOINING_DUAL or joining == JOINING_CAUSING:
+        return 1
+    return 0
+
+fun _shape_can_join_backward(joining: i32) -> i32:
+    if joining == JOINING_DUAL or joining == JOINING_RIGHT or joining == JOINING_CAUSING:
+        return 1
+    return 0
+
+# Index of the previous codepoint that is not a transparent mark, or -1.
+fun _shape_prev_index(codepoints: i64, index: i32) -> i32:
+    i: i32 = index - 1
+    while i >= 0:
+        if unicode_joining_type(Memory.read_i32(codepoints + (i as i64) * 4)) != JOINING_TRANSPARENT:
+            return i
+        i = i - 1
+    return -1
+
+# Index of the next codepoint that is not a transparent mark, or -1.
+fun _shape_next_index(codepoints: i64, count: i32, index: i32) -> i32:
+    i: i32 = index + 1
+    while i < count:
+        if unicode_joining_type(Memory.read_i32(codepoints + (i as i64) * 4)) != JOINING_TRANSPARENT:
+            return i
+        i = i + 1
+    return -1
+
+# Shape `count` codepoints into `out`. Returns how many codepoints were
+# written, which can be fewer than the input when lam-alef ligatures form.
+# Returns -1 if the output buffer is too small.
+fun arabic_shape(codepoints: i64, count: i32, out: i64, capacity: i32) -> i32:
+    written: i32 = 0
+    i: i32 = 0
+    cp: i32 = 0
+    own: i32 = 0
+    prev: i32 = 0
+    next: i32 = 0
+    joins_back: i32 = 0
+    joins_forward: i32 = 0
+    form: i32 = 0
+    shaped: i32 = 0
+
+    while i < count:
+        if written >= capacity:
+            return -1
+        cp = Memory.read_i32(codepoints + (i as i64) * 4)
+        own = unicode_joining_type(cp)
+
+        if own == JOINING_TRANSPARENT:
+            Memory.write_i32(out + (written as i64) * 4, cp)
+            written = written + 1
+            i = i + 1
+            continue
+
+        prev = _shape_prev_index(codepoints, i)
+        next = _shape_next_index(codepoints, count, i)
+
+        joins_back = 0
+        if prev >= 0:
+            if _shape_can_join_forward(unicode_joining_type(Memory.read_i32(codepoints + (prev as i64) * 4))) == 1:
+                joins_back = 1
+
+        # Lam followed by an alef becomes one ligature, taking its final form
+        # when the lam itself connects to what came before it.
+        if cp == 1604 and next >= 0:
+            ligature: i32 = arabic_lam_alef(Memory.read_i32(codepoints + (next as i64) * 4))
+            if ligature != 0:
+                if joins_back == 1:
+                    ligature = ligature + 1
+                Memory.write_i32(out + (written as i64) * 4, ligature)
+                written = written + 1
+                # Carry any marks between the lam and the alef, then skip both.
+                j: i32 = i + 1
+                while j < next:
+                    if written >= capacity:
+                        return -1
+                    Memory.write_i32(out + (written as i64) * 4, Memory.read_i32(codepoints + (j as i64) * 4))
+                    written = written + 1
+                    j = j + 1
+                i = next + 1
+                continue
+
+        joins_forward = 0
+        if next >= 0 and _shape_can_join_forward(own) == 1:
+            if _shape_can_join_backward(unicode_joining_type(Memory.read_i32(codepoints + (next as i64) * 4))) == 1:
+                joins_forward = 1
+
+        form = SHAPE_ISOLATED
+        if joins_back == 1 and joins_forward == 1:
+            form = SHAPE_MEDIAL
+        elif joins_back == 1:
+            form = SHAPE_FINAL
+        elif joins_forward == 1:
+            form = SHAPE_INITIAL
+
+        shaped = arabic_form_of(cp, form)
+        Memory.write_i32(out + (written as i64) * 4, shaped)
+        written = written + 1
+        i = i + 1
+    return written
+
+# Shape a UTF-8 string into a UTF-8 buffer. Allocates a codepoint scratch
+# internally and releases it before returning. Returns the byte length
+# written, or -1 if the output buffer was too small.
+fun arabic_shape_str(value: str, out: i64, capacity: i64) -> i64:
+    count: i32 = utf8_count(value)
+    if count == 0:
+        Memory.write_i8(out, 0 as i8)
+        return 0
+    source: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if source == 0:
+        return -1
+    target: i64 = Memory.malloc_zeroed((count as i64) * 4)
+    if target == 0:
+        Memory.free(source)
+        return -1
+
+    decoded: i32 = utf8_decode_all(value, source, count)
+    shaped: i32 = arabic_shape(source, decoded, target, count)
+    result: i64 = -1
+    if shaped >= 0:
+        result = utf8_encode_all(target, shaped, out, capacity)
+    Memory.free(source)
+    Memory.free(target)
+    return result

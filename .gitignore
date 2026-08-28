@@ -1,0 +1,5 @@
+/tests/*.exe
+/tests/*.obj
+/tests/*.mlir
+/tests/*.ll
+/tests/*-linux

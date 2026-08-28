@@ -1,0 +1,19 @@
+# Text Module Metadata
+# Script-aware text processing. Pure Dolet, zero OS calls.
+
+[info]
+name = text
+version = 0.1.0
+layer = pure
+description = Pure-Dolet Arabic cursive shaping to the presentation forms, including lam-alef ligatures and transparent marks.
+author = xRo0t
+license = MIT
+
+[dependencies]
+unicode = "*"
+
+[link.windows]
+
+[link.linux]
+
+[link.macos]
