@@ -308,6 +308,21 @@ fun text_display_scratch_slots(count: i32) -> i32:
 # Shape and reorder using caller-supplied working space. `scratch` must hold
 # at least text_display_scratch_slots(count) i32 values.
 fun text_display_into(codepoints: i64, count: i32, out: i64, capacity: i32, scratch: i64) -> i32:
+    return text_display_detail(codepoints, count, out, 0, 0, capacity, scratch)
+
+# The same, also reporting where each drawn glyph came from and which
+# direction it runs in.
+#
+# A caret is the reason this exists. It lives at a position in the LOGICAL
+# text, and it has to be drawn somewhere in the VISUAL text, and after shaping
+# and reordering those two have no arithmetic relationship left. With
+# `sources` and `levels` the answer is direct: find the glyph that came from
+# the character the caret sits before, and put the caret on its leading edge —
+# which is its left side in a left-to-right run and its right side in a
+# right-to-left one.
+#
+# `sources` and `levels` may be 0 when only the glyphs are wanted.
+fun text_display_detail(codepoints: i64, count: i32, out: i64, sources: i64, levels_out: i64, capacity: i32, scratch: i64) -> i32:
     if count <= 0:
         return 0
     span: i64 = (count as i64) * 4
@@ -333,8 +348,14 @@ fun text_display_into(codepoints: i64, count: i32, out: i64, capacity: i32, scra
     bidi_reorder(shaped_levels, written, order)
 
     i = 0
+    slot: i32 = 0
     while i < written:
-        Memory.write_i32(out + (i as i64) * 4, Memory.read_i32(shaped + (Memory.read_i32(order + (i as i64) * 4) as i64) * 4))
+        slot = Memory.read_i32(order + (i as i64) * 4)
+        Memory.write_i32(out + (i as i64) * 4, Memory.read_i32(shaped + (slot as i64) * 4))
+        if sources != 0:
+            Memory.write_i32(sources + (i as i64) * 4, Memory.read_i32(map + (slot as i64) * 4))
+        if levels_out != 0:
+            Memory.write_i32(levels_out + (i as i64) * 4, Memory.read_i32(shaped_levels + (slot as i64) * 4))
         i = i + 1
     return written
 
