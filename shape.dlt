@@ -106,6 +106,14 @@ fun arabic_forms(cp: i32) -> i32:
         return 65265 * 8 + 4
     return 0
 
+# Presentation form of a tashkeel mark. The block runs in pairs from FE70,
+# the even entry being the standalone form and the odd one the form drawn on
+# a tatweel; a mark sitting on a letter takes the standalone shape.
+fun arabic_mark_form(cp: i32) -> i32:
+    if cp >= 1611 and cp <= 1618:
+        return 65136 + (cp - 1611) * 2
+    return cp
+
 # Isolated form of the lam-alef ligature for this alef, or 0.
 fun arabic_lam_alef(alef: i32) -> i32:
     if alef == 1570:
@@ -192,7 +200,10 @@ fun arabic_shape_mapped(codepoints: i64, count: i32, out: i64, map: i64, capacit
         own = unicode_joining_type(cp)
 
         if own == JOINING_TRANSPARENT:
-            Memory.write_i32(out + (written as i64) * 4, cp)
+            # A mark is transparent to joining but not to shaping: it has a
+            # presentation form of its own, and only that form is in a font's
+            # character map where the renderer can find it.
+            Memory.write_i32(out + (written as i64) * 4, arabic_mark_form(cp))
             if map != 0:
                 Memory.write_i32(map + (written as i64) * 4, i)
             written = written + 1
@@ -223,7 +234,7 @@ fun arabic_shape_mapped(codepoints: i64, count: i32, out: i64, map: i64, capacit
                 while j < next:
                     if written >= capacity:
                         return -1
-                    Memory.write_i32(out + (written as i64) * 4, Memory.read_i32(codepoints + (j as i64) * 4))
+                    Memory.write_i32(out + (written as i64) * 4, arabic_mark_form(Memory.read_i32(codepoints + (j as i64) * 4)))
                     if map != 0:
                         Memory.write_i32(map + (written as i64) * 4, j)
                     written = written + 1

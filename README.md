@@ -27,9 +27,11 @@ gives initial or final, neither gives isolated.
 
 Two cases make it more than that rule:
 
-- **Marks are transparent.** A fatha between two letters sits on the first
-  without breaking its connection to the second, so the search for a
-  neighbour skips it.
+- **Marks are transparent, and shaped.** A fatha between two letters sits on
+  the first without breaking its connection to the second, so the search for a
+  neighbour skips it — and the mark itself takes its own presentation form
+  from FE70..FE7F, because only that form is in a font's character map where
+  a renderer can find it.
 - **Lam followed by an alef is one ligature**, not two letters side by side,
   and Unicode gives it its own codepoints. This is why the output can be
   shorter than the input.

@@ -102,14 +102,24 @@ fun main() -> i32:
     put(source, 1, 1614)
     put(source, 2, 1576)
     n = shape_into(source, 3, out)
+    if arabic_mark_form(1611) != 65136 or arabic_mark_form(1617) != 65148:
+        print("text smoke: the mark form table is wrong")
+        return 33
+    if arabic_mark_form(1576) != 1576:
+        print("text smoke: a letter was treated as a mark")
+        return 34
     if n != 3:
         print("text smoke: a mark was dropped")
         return 12
     if at(out, 0) != 65169:
         print("text smoke: a mark broke the connection to the following letter")
         return 13
-    if at(out, 1) != 1614:
-        print("text smoke: the mark itself was altered")
+    # The mark takes its presentation form like every other letter: only
+    # that form is in a font's character map, so leaving it as U+064E would
+    # mean a diacritic that can never be drawn.
+    # FE76 = 65136 + (0x64E - 0x64B) * 2
+    if at(out, 1) != 65142:
+        print("text smoke: the mark did not take its presentation form")
         return 14
     if at(out, 2) != 65168:
         print("text smoke: a mark broke the connection to the preceding letter")

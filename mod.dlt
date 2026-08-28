@@ -17,6 +17,7 @@ export SHAPE_MEDIAL
 export arabic_forms
 export arabic_form_of
 export arabic_lam_alef
+export arabic_mark_form
 export arabic_shape
 export arabic_shape_str
 export arabic_shape_mapped
