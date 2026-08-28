@@ -26,3 +26,7 @@ export bidi_reorder
 export bidi_visual_order
 export text_display_order
 export text_display_str
+export text_display_into
+export text_display_str_into
+export text_display_scratch_slots
+export text_needs_display_pass

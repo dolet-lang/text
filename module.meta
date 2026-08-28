@@ -3,7 +3,7 @@
 
 [info]
 name = text
-version = 0.2.0
+version = 0.3.0
 layer = pure
 description = Pure-Dolet Arabic cursive shaping to the presentation forms plus UAX #9 bidirectional ordering, including lam-alef ligatures and transparent marks.
 author = xRo0t

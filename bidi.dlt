@@ -274,6 +274,89 @@ fun bidi_visual_order(codepoints: i64, count: i32, order: i64, para_level: i32) 
     Memory.free(levels)
     return result
 
+# True when a string contains anything the display pass would change.
+# One walk over the bytes with no decoding: the UTF-8 lead bytes for Hebrew,
+# Arabic, Syriac, Thaana and the Arabic presentation forms are a small set,
+# so a Latin string is rejected at the cost of one comparison per byte.
+# A false positive only means running a pass that changes nothing.
+fun text_needs_display_pass(value: str) -> i32:
+    limit: i64 = Memory.strlen(value)
+    bytes: i64 = value as i64
+    i: i64 = 0
+    b: i32 = 0
+    while i < limit:
+        b = Memory.read_i8(bytes + i) & 255
+        # U+0590..U+07FF lead bytes, then the U+F000..U+FFFF lead byte.
+        if b >= 214 and b <= 223:
+            return 1
+        if b == 239:
+            return 1
+        i = i + 1
+    return 0
+
+# ---------------------------------------------------------------
+# Allocation-free variants
+# ---------------------------------------------------------------
+# A renderer runs this on every string of every frame. Allocating six arrays
+# each time would put a malloc pair in the middle of the draw loop, so the
+# caller keeps one scratch buffer and hands it over.
+
+# i32 slots a display pass needs for `count` codepoints.
+fun text_display_scratch_slots(count: i32) -> i32:
+    return count * 7
+
+# Shape and reorder using caller-supplied working space. `scratch` must hold
+# at least text_display_scratch_slots(count) i32 values.
+fun text_display_into(codepoints: i64, count: i32, out: i64, capacity: i32, scratch: i64) -> i32:
+    if count <= 0:
+        return 0
+    span: i64 = (count as i64) * 4
+    shaped: i64 = scratch
+    map: i64 = scratch + span
+    types: i64 = scratch + span * 2
+    levels: i64 = scratch + span * 3
+    shaped_levels: i64 = scratch + span * 4
+    order: i64 = scratch + span * 5
+
+    written: i32 = arabic_shape_mapped(codepoints, count, shaped, map, count)
+    if written < 0:
+        return -1
+    if written > capacity:
+        return -1
+
+    para: i32 = bidi_paragraph_level(codepoints, count)
+    bidi_resolve(codepoints, count, types, levels, para)
+    i: i32 = 0
+    while i < written:
+        Memory.write_i32(shaped_levels + (i as i64) * 4, Memory.read_i32(levels + (Memory.read_i32(map + (i as i64) * 4) as i64) * 4))
+        i = i + 1
+    bidi_reorder(shaped_levels, written, order)
+
+    i = 0
+    while i < written:
+        Memory.write_i32(out + (i as i64) * 4, Memory.read_i32(shaped + (Memory.read_i32(order + (i as i64) * 4) as i64) * 4))
+        i = i + 1
+    return written
+
+# Same between UTF-8 strings, still without allocating. The last block of the
+# scratch holds the decoded source.
+fun text_display_str_into(value: str, out: i64, capacity: i64, scratch: i64, slots: i32) -> i64:
+    count: i32 = utf8_count(value)
+    if count == 0:
+        Memory.write_i8(out, 0 as i8)
+        return 0
+    if slots < text_display_scratch_slots(count):
+        return -1
+    span: i64 = (count as i64) * 4
+    source: i64 = scratch + span * 6
+    decoded: i32 = utf8_decode_all(value, source, count)
+    # The display pass writes over the first block, so it cannot share it
+    # with the source; give it the six blocks before.
+    written: i32 = text_display_into(source, decoded, source, count, scratch)
+    if written < 0:
+        return -1
+    return utf8_encode_all(source, written, out, capacity)
+
 # The whole pipeline a renderer wants: shape in logical order, because joining
 # depends on logical neighbours, then reorder the result for display.
 # Returns the number of codepoints written, or -1 on failure.
